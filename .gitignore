@@ -1,0 +1,11 @@
+# Compiled binaries
+/poll
+*.exe
+*.out
+
+# Go workspace files
+go.work
+go.work.sum
+
+# Local credentials
+.env

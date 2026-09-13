@@ -1,0 +1,61 @@
+version: "2"
+
+linters:
+  # errcheck, govet, ineffassign, staticcheck and unused.
+  default: standard
+  enable:
+    # Correct error wrapping matters here: the client wraps every transport and
+    # API failure with %w so callers can still use errors.Is and errors.As.
+    - errorlint
+    # Exported identifiers in a library must be documented.
+    - revive
+    - godot
+    - gocritic
+    - misspell
+    - unconvert
+    - unparam
+    - wastedassign
+    - whitespace
+    - predeclared
+    - usestdlibvars
+    - copyloopvar
+    - nolintlint
+
+  settings:
+    godot:
+      scope: declarations
+    revive:
+      rules:
+        - name: exported
+        - name: package-comments
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - style
+        - performance
+      disabled-checks:
+        # Devices and query structs travel by value on purpose: they are plain
+        # data, copied once per network round trip, and taking pointers would
+        # invite aliasing for a saving nobody can measure.
+        - hugeParam
+        - rangeValCopy
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+
+  exclusions:
+    generated: lax
+    presets:
+      - std-error-handling
+    rules:
+      # Test helpers are internal to the package and need no doc comments.
+      - path: _test\.go$
+        linters:
+          - revive
+          - godot
+          - unparam
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
