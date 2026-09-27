@@ -78,6 +78,46 @@ go run ./examples/poll -status
 go run ./examples/poll -status -watch 2m
 ```
 
+## Signing in from code
+
+The key the login page hands out expires after some days, and the service has
+no refresh token: the only way to a new key is to sign in again. The page does
+that with one plain request, and so can this package:
+
+```go
+creds := aqaramcp.Credentials{
+    Username:    os.Getenv("AQARA_USERNAME"),
+    PasswordMD5: os.Getenv("AQARA_PASSWORD_MD5"),
+    Region:      aqaramcp.RegionRU,
+}
+client, err := aqaramcp.New("", aqaramcp.WithLogin(creds))
+```
+
+Built this way, the client signs in at first use and again whenever the server
+rejects the key it holds; the call that met the rejection is made once more
+with the fresh key, so a long-running program never notices an expiry. A
+refused sign-in (wrong account, password or region) comes back as a
+`*LoginError` and is not retried for an hour, so a mistyped password does not
+hammer the account. `WithLoginHook` tells you about every sign-in, and `Login`
+alone fetches a key for other uses.
+
+Two things worth knowing:
+
+* **The region** is the one the account was registered in; the login page
+  picks it from the country. `RegionEU` covers Europe and Africa, `RegionRU`
+  Russia and the CIS (Kazakhstan included), `RegionUS` the Americas,
+  `RegionCN` mainland China, `RegionKR` Korea and `RegionSG` the rest of Asia,
+  Australia and the Middle East. A wrong region is refused like a wrong
+  password.
+* **The service only ever sees the MD5 of the password**, and so does this
+  package: `Credentials` takes the digest (`printf %s "$password" | md5sum`),
+  never the password, so the password need not exist on the machine that
+  signs in. The digest is still a credential: anyone holding it can sign in.
+
+`go run ./examples/login -status` signs in once and reads the devices with the
+fresh key; with `AQARA_MCP_KEY` set to an earlier key it also tells whether
+the new sign-in revoked that key.
+
 ## What comes back
 
 `Devices` lists the home; `Statuses` adds each device's state as a flat set of
@@ -122,6 +162,8 @@ so this package ignores it.
 * `*RPCError` — the MCP layer refused the request, e.g. an unknown tool.
 * `*HTTPError` — the response was not an MCP answer at all: a rejected key
   arrives as `401 Unauthorized: {"error":"unauthorized or expired"}`.
+* `*LoginError` — the service refused a sign-in, in its own words; the
+  account, the password or the region is wrong.
 
 ## Limits
 

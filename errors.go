@@ -37,6 +37,13 @@ type HTTPError struct {
 	Body       string // truncated response body, for diagnosis
 }
 
+// LoginError is the service refusing a sign-in — the account, the password
+// or the region is wrong — in its own words. Retrying changes nothing.
+type LoginError struct {
+	Code    int
+	Message string
+}
+
 // Error implements the error interface.
 func (e *RPCError) Error() string {
 	return fmt.Sprintf("mcp %s: rpc error %d: %s", e.Method, e.Code, e.Message)
@@ -50,4 +57,9 @@ func (e *ToolError) Error() string {
 // Error implements the error interface.
 func (e *HTTPError) Error() string {
 	return fmt.Sprintf("mcp http %s: %s: %s", e.Method, e.Status, e.Body)
+}
+
+// Error implements the error interface.
+func (e *LoginError) Error() string {
+	return fmt.Sprintf("login refused: %s (code %d)", e.Message, e.Code)
 }

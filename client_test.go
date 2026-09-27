@@ -41,9 +41,20 @@ type server struct {
 	reply        func(tool string, args json.RawMessage) string // JSON of the ToolResult to answer with
 
 	initWithSession bool // an initialise request arrived carrying a session ID
+
+	key         string         // the bearer the server honours; empty means testKey
+	logins      []loginRequest // sign-ins received, in order
+	issuedKeys  int            // keys handed out by sign-ins so far
+	loginCode   int            // refuse sign-ins with this code; 0 issues a key
+	loginBroken bool           // answer sign-ins with the 400 the real one gives an unreadable request
 }
 
 const testKey = "test-api-key"
+
+// testDigest is the MD5 of "correct horse"; testCreds sign in with it.
+const testDigest = "3cb4e732631f47e6eb961f34554b7cde"
+
+var testCreds = Credentials{Username: "home@example.com", PasswordMD5: testDigest, Region: RegionRU}
 
 // errTransport is returned by a deliberately broken HTTP client.
 var errTransport = errors.New("transport failure")
@@ -74,8 +85,18 @@ func TestNew(t *testing.T) {
 			want: "https://agent.aqara.com/open/mcp",
 		},
 		{
-			name:    "the key is required",
-			wantErr: "aqaramcp: API key is required",
+			name: "credentials stand in for the key",
+			opts: []Option{WithLogin(testCreds)},
+			want: "https://agent.aqara.com/open/mcp",
+		},
+		{
+			name:    "credentials are checked up front",
+			opts:    []Option{WithLogin(Credentials{Username: "home@example.com", Region: RegionRU})},
+			wantErr: "aqaramcp: login: password MD5 is required",
+		},
+		{
+			name:    "the key or credentials are required",
+			wantErr: "aqaramcp: API key or login credentials are required",
 		},
 	}
 
@@ -164,14 +185,50 @@ func TestClientCall(t *testing.T) {
 		name        string
 		server      *server
 		broken      bool // use an HTTP client that always fails
+		login       bool // build the client with credentials instead of the key
 		tool        string
 		args        any
 		before      func(t *testing.T, c *Client, s *server) // runs on an open session, before the call
 		want        ToolResult
 		wantArgs    string
 		wantMethods []string
+		wantLogins  int // sign-ins the server received over the whole case
 		wantErr     string
 	}{
+		{
+			name:        "signs in first when built with credentials",
+			server:      &server{reply: constant(answer)},
+			login:       true,
+			tool:        "device_status_inquiry",
+			want:        ToolResult{Content: []Content{{Type: "text", Text: `{"message":"ok"}`}}, StructuredContent: json.RawMessage(`{"result":{"message":"ok"}}`)},
+			wantMethods: []string{"initialize", "notifications/initialized", "tools/call"},
+			wantLogins:  1,
+		},
+		{
+			name:        "replaces an expired key and makes the call again",
+			server:      &server{reply: constant(answer)},
+			login:       true,
+			tool:        "device_status_inquiry",
+			before:      func(_ *testing.T, _ *Client, s *server) { s.expire() },
+			want:        ToolResult{Content: []Content{{Type: "text", Text: `{"message":"ok"}`}}, StructuredContent: json.RawMessage(`{"result":{"message":"ok"}}`)},
+			wantMethods: []string{"initialize", "notifications/initialized", "tools/call"},
+			wantLogins:  2, // once to open, once after the expiry
+		},
+		{
+			name:    "a static key is not replaced",
+			server:  &server{},
+			tool:    "device_status_inquiry",
+			before:  func(_ *testing.T, _ *Client, s *server) { s.expire() },
+			wantErr: `aqaramcp: call device_status_inquiry: mcp http tools/call: 401 Unauthorized: {"error":"unauthorized or expired"}`,
+		},
+		{
+			name:       "a refused sign-in is reported in the service's words",
+			server:     &server{loginCode: 1001},
+			login:      true,
+			tool:       "device_status_inquiry",
+			wantLogins: 1,
+			wantErr:    "aqaramcp: call device_status_inquiry: login refused: Sign-in failed. Check your account, password, or region and try again. (code 1001)",
+		},
 		{
 			name:   "runs a tool and returns its answer",
 			server: &server{reply: constant(answer)},
@@ -291,7 +348,12 @@ func TestClientCall(t *testing.T) {
 			if tt.broken {
 				opts = append(opts, WithHTTPClient(brokenDoer(t)))
 			}
-			c, s := newServer(t, tt.server, opts...)
+			key := testKey
+			if tt.login {
+				key = ""
+				opts = append(opts, WithLogin(testCreds))
+			}
+			c, s := newClient(t, tt.server, key, opts...)
 			if tt.before != nil {
 				// Open the session first, so the case can tamper with it.
 				if _, err := c.Tools(context.Background()); err != nil {
@@ -304,6 +366,9 @@ func TestClientCall(t *testing.T) {
 			got, err := c.Call(context.Background(), tt.tool, tt.args)
 			if s.staleInit() {
 				t.Errorf("an initialise request carried a stale session ID")
+			}
+			if got := len(s.signIns()); got != tt.wantLogins {
+				t.Errorf("sign-ins = %d, want %d", got, tt.wantLogins)
 			}
 			if tt.wantErr != "" {
 				errContains(t, err, tt.wantErr)
@@ -355,8 +420,16 @@ func TestToolResultText(t *testing.T) {
 	}
 }
 
-// newServer starts a fake server and returns it with a client aimed at it.
+// newServer starts a fake server and returns it with a client aimed at it,
+// holding the key the server honours.
 func newServer(t *testing.T, s *server, opts ...Option) (*Client, *server) {
+	t.Helper()
+	return newClient(t, s, testKey, opts...)
+}
+
+// newClient starts a fake server and returns it with a client built with the
+// given key, which may be empty when the options carry credentials.
+func newClient(t *testing.T, s *server, key string, opts ...Option) (*Client, *server) {
 	t.Helper()
 	if s == nil {
 		s = &server{}
@@ -364,7 +437,7 @@ func newServer(t *testing.T, s *server, opts ...Option) (*Client, *server) {
 	srv := httptest.NewServer(s)
 	t.Cleanup(srv.Close)
 
-	c, err := New(testKey, append([]Option{WithEndpoint(srv.URL)}, opts...)...)
+	c, err := New(key, append([]Option{WithEndpoint(srv.URL)}, opts...)...)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -374,7 +447,11 @@ func newServer(t *testing.T, s *server, opts ...Option) (*Client, *server) {
 // ServeHTTP checks the request, runs the protocol and answers.
 func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	body, _ := io.ReadAll(r.Body)
-	if s.unauthorized {
+	if r.URL.Path == loginPath {
+		s.serveLogin(w, r, body)
+		return
+	}
+	if s.unauthorized || r.Header.Get("Authorization") != "Bearer "+s.bearer() {
 		w.WriteHeader(http.StatusUnauthorized)
 		_, _ = io.WriteString(w, `{"error":"unauthorized or expired"}`)
 		return
@@ -489,6 +566,60 @@ func (s *server) answer(w http.ResponseWriter, id json.RawMessage, result string
 	_, _ = io.WriteString(w, "event: message\ndata: "+message+"\n\n")
 }
 
+// serveLogin plays the sign-in endpoint: it records the request and issues a
+// key the server honours from then on, or refuses the way the real one does.
+func (s *server) serveLogin(w http.ResponseWriter, r *http.Request, body []byte) {
+	if r.Method != http.MethodPost || r.Header.Get("Content-Type") != "application/json" {
+		http.Error(w, "a sign-in is a JSON POST", http.StatusBadRequest)
+		return
+	}
+	var req loginRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		http.Error(w, "sign-in body is not JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.logins = append(s.logins, req)
+	w.Header().Set("Content-Type", "application/json")
+	switch {
+	case s.loginBroken:
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"detail":"Failed to process login credentials. Check encryption/key."}`)
+	case s.loginCode != 0:
+		_, _ = fmt.Fprintf(w, `{"code":%d,"message":"Sign-in failed. Check your account, password, or region and try again."}`, s.loginCode)
+	default:
+		s.issuedKeys++
+		s.key = fmt.Sprintf("issued-key-%d", s.issuedKeys)
+		_, _ = fmt.Fprintf(w, `{"code":0,"message":"success","result":{"api_key":%q,"region":%q}}`, s.key, req.Region)
+	}
+}
+
+// bearer returns the key the server honours.
+func (s *server) bearer() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.key == "" {
+		return testKey
+	}
+	return s.key
+}
+
+// expire invalidates the key the client holds, as the real server does after
+// some days; only a sign-in yields one that works again.
+func (s *server) expire() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.key = "expired"
+}
+
+// signIns returns the sign-in requests received, in order.
+func (s *server) signIns() []loginRequest {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]loginRequest(nil), s.logins...)
+}
+
 // refuseAck makes the server fail the next initialised notification, leaving
 // the client with a session it was given but could not finish opening.
 func (s *server) refuseAck() {
@@ -541,8 +672,6 @@ func verifyRequest(r *http.Request, body []byte) string {
 	switch {
 	case r.Method != http.MethodPost:
 		return "not a POST"
-	case r.Header.Get("Authorization") != "Bearer "+testKey:
-		return "bad Authorization"
 	case r.Header.Get("Content-Type") != "application/json":
 		return "not JSON"
 	case !strings.Contains(r.Header.Get("Accept"), "application/json") ||

@@ -20,6 +20,8 @@ import (
 type Client struct {
 	endpoint string
 	apiKey   string
+	creds    *Credentials // sign in for the key when there is none or it is rejected; nil means the key is static
+	onLogin  func(Key)    // told about every successful sign-in
 	http     Doer
 
 	mu        sync.Mutex // serialises use of the single session and guards its state
@@ -27,6 +29,8 @@ type Client struct {
 	protocol  string // revision the server settled on when the session opened
 	nextID    int64
 	ready     bool
+	refused   *LoginError // the last refused sign-in, which stands for loginCooldown
+	refusedAt time.Time
 }
 
 const (
@@ -39,7 +43,12 @@ const (
 	protocolVersion = "2025-06-18"
 
 	// clientVersion is what this client calls itself when opening a session.
-	clientVersion = "0.1.0"
+	clientVersion = "0.2.0"
+
+	// loginCooldown is how long a refused sign-in is left alone: the
+	// credentials will not have changed within the hour, and retrying at a
+	// polling rate would only invite the service to lock the account.
+	loginCooldown = time.Hour
 
 	// defaultTimeout bounds one request, including reading its whole event
 	// stream. Tool calls reach into the Aqara cloud behind the scenes, so they
@@ -144,13 +153,34 @@ func WithHTTPClient(d Doer) Option {
 	}
 }
 
-// New creates a client for the given API key, obtained by signing in at
-// https://agent.aqara.com/login. It performs no network I/O; the first call
-// opens the session.
-func New(apiKey string, opts ...Option) (*Client, error) {
-	if apiKey == "" {
-		return nil, errors.New("aqaramcp: API key is required")
+// WithLogin makes the client sign in for its key: at first use when New was
+// given no key, and again whenever the server rejects the key it holds, in
+// which case the call that met the rejection is made once more with the
+// fresh key. The service issues keys that live for days, so a long-running
+// program keeps working across expiries without anyone visiting the login
+// page. A refused sign-in — wrong account, password or region — is reported
+// as a [*LoginError] and not retried for an hour.
+func WithLogin(creds Credentials) Option {
+	return func(c *Client) {
+		c.creds = &creds
 	}
+}
+
+// WithLoginHook registers fn to be called after every successful sign-in
+// with the key just issued: to log the event (never the key itself), count
+// it, or hand the key to something else. It runs while the client holds its
+// lock, so it must not call back into the [Client].
+func WithLoginHook(fn func(Key)) Option {
+	return func(c *Client) {
+		c.onLogin = fn
+	}
+}
+
+// New creates a client. The key is the one the login page at
+// https://agent.aqara.com/login hands out; with [WithLogin] the client signs
+// in by itself and the key may be empty. New performs no network I/O; the
+// first call signs in if it must and opens the session.
+func New(apiKey string, opts ...Option) (*Client, error) {
 	c := &Client{
 		endpoint: DefaultEndpoint,
 		apiKey:   apiKey,
@@ -159,6 +189,14 @@ func New(apiKey string, opts ...Option) (*Client, error) {
 	}
 	for _, o := range opts {
 		o(c)
+	}
+	switch {
+	case c.creds != nil:
+		if err := c.creds.validate(); err != nil {
+			return nil, fmt.Errorf("aqaramcp: %w", err)
+		}
+	case c.apiKey == "":
+		return nil, errors.New("aqaramcp: API key or login credentials are required")
 	}
 	return c, nil
 }
@@ -203,12 +241,35 @@ func (r ToolResult) Text() string {
 	return b.String()
 }
 
-// request performs one exchange on an open session, opening the session
-// first if needed and once more if the server has forgotten it.
+// request performs one exchange on an open session. With credentials, a
+// missing key is obtained first and a rejected one replaced, the call then
+// being made once more; New guarantees credentials when the key is empty.
 func (c *Client) request(ctx context.Context, method string, params, out any) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	if c.apiKey == "" {
+		if err := c.refresh(ctx); err != nil {
+			return err
+		}
+	}
+	err := c.exchange(ctx, method, params, out)
+	if c.creds != nil && rejected(err) {
+		// The key has expired: the server is not forgetting the session,
+		// it is refusing the bearer. A fresh key starts a fresh session.
+		if err := c.refresh(ctx); err != nil {
+			return err
+		}
+		c.ready, c.sessionID = false, ""
+		return c.exchange(ctx, method, params, out)
+	}
+	return err
+}
+
+// exchange opens the session if needed and performs the call, once more on
+// a new session if the server has forgotten the old one. The caller must
+// hold c.mu.
+func (c *Client) exchange(ctx context.Context, method string, params, out any) error {
 	if err := c.open(ctx); err != nil {
 		return err
 	}
@@ -223,6 +284,38 @@ func (c *Client) request(ctx context.Context, method string, params, out any) er
 		return c.rpc(ctx, method, params, out)
 	}
 	return err
+}
+
+// refresh signs in for a new key. A refusal is remembered and stands for
+// loginCooldown; a transport failure is not, the next call tries again. The
+// caller must hold c.mu.
+func (c *Client) refresh(ctx context.Context) error {
+	if c.refused != nil {
+		if since := time.Since(c.refusedAt); since < loginCooldown {
+			return fmt.Errorf("login: refused %s ago, not retried for another %s: %w",
+				since.Round(time.Second), (loginCooldown - since).Round(time.Second), c.refused)
+		}
+	}
+	key, err := c.login(ctx, *c.creds)
+	var refusal *LoginError
+	if errors.As(err, &refusal) {
+		c.refused, c.refusedAt = refusal, time.Now()
+	}
+	if err != nil {
+		return err
+	}
+	c.refused = nil
+	c.apiKey = key.APIKey
+	if c.onLogin != nil {
+		c.onLogin(key)
+	}
+	return nil
+}
+
+// rejected reports whether err is the server refusing the bearer key.
+func rejected(err error) bool {
+	var httpErr *HTTPError
+	return errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusUnauthorized
 }
 
 // open starts the MCP session once: initialise, remember the session ID and

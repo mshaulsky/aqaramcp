@@ -19,6 +19,16 @@
 // and reopens the session transparently when the server forgets it. A
 // [Client] is safe for concurrent use; calls on one session are serialised.
 //
+// # Signing in
+//
+// Keys expire after some days and there is no refresh token; the login page
+// simply signs in again, with one plain request. [WithLogin] gives the client
+// the account's credentials — the MD5 of the password, which is all the
+// service ever receives, never the password itself — so it fetches its first
+// key by itself and replaces a rejected one, repeating the call that met the
+// rejection. [Login] alone performs the
+// sign-in for other uses of the key.
+//
 // # What comes back
 //
 // Every tool answers with a table: the first row names the columns, the rest
