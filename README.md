@@ -158,7 +158,10 @@ so this package ignores it.
 
 * `*ToolError` — the platform ran the tool and refused: `Message` is its own
   wording (e.g. `Device control action not supported`) and `TraceID` is what to
-  quote to support.
+  quote to support. Behind a generic `Business error occurred.` the platform
+  usually puts a reason, which `Code` and `Detail` carry (e.g.
+  `ERROR.NoHomesUnderAccount`, `No homes under account` — the account is in
+  no home).
 * `*RPCError` — the MCP layer refused the request, e.g. an unknown tool.
 * `*HTTPError` — the response was not an MCP answer at all: a rejected key
   arrives as `401 Unauthorized: {"error":"unauthorized or expired"}`.

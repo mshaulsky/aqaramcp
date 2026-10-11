@@ -66,6 +66,11 @@ func TestClientDevices(t *testing.T) {
 			wantErr: "aqaramcp: list devices: aqara tool device_base_inquiry: Device control action not supported",
 		},
 		{
+			name:    "a refusal with a reason names it",
+			reply:   toolResultJSON(`{"message":"Business error occurred.","trace_id":"trace","outputs":{"code":"ERROR.NoHomesUnderAccount","message":"No homes under account"},"panels":null}`, false),
+			wantErr: "aqaramcp: list devices: aqara tool device_base_inquiry: Business error occurred: No homes under account (ERROR.NoHomesUnderAccount)",
+		},
+		{
 			name:    "an MCP-level tool failure is a tool error too",
 			reply:   `{"content":[{"type":"text","text":"{\"message\":\"Internal error\",\"outputs\":{}}"}],"isError":true}`,
 			wantErr: "aqaramcp: list devices: aqara tool device_base_inquiry: Internal error",

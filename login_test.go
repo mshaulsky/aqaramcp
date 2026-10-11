@@ -129,7 +129,7 @@ func TestClientCallLoginCooldown(t *testing.T) {
 			return &http.Response{
 				StatusCode: http.StatusOK, Status: "200 OK",
 				Header: http.Header{"Content-Type": {"application/json"}},
-				Body:   io.NopCloser(strings.NewReader(`{"code":1001,"message":"Sign-in failed."}`)),
+				Body:   io.NopCloser(strings.NewReader(`{"code":1001,"message":"Sign-in failed.","result":""}`)),
 			}, nil
 		}
 		// One sign-in now, one after the cool-down; the call in between must

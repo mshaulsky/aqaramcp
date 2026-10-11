@@ -587,7 +587,8 @@ func (s *server) serveLogin(w http.ResponseWriter, r *http.Request, body []byte)
 		w.WriteHeader(http.StatusBadRequest)
 		_, _ = io.WriteString(w, `{"detail":"Failed to process login credentials. Check encryption/key."}`)
 	case s.loginCode != 0:
-		_, _ = fmt.Fprintf(w, `{"code":%d,"message":"Sign-in failed. Check your account, password, or region and try again."}`, s.loginCode)
+		// A refusal carries an empty string where a success carries the key.
+		_, _ = fmt.Fprintf(w, `{"code":%d,"message":"Sign-in failed. Check your account, password, or region and try again.","result":""}`, s.loginCode)
 	default:
 		s.issuedKeys++
 		s.key = fmt.Sprintf("issued-key-%d", s.issuedKeys)

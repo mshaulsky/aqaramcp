@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // errSessionExpired marks a request the server refused because it no longer
@@ -21,10 +22,14 @@ type RPCError struct {
 
 // ToolError is a failure a tool reported after running: the platform refused
 // the query, or answered with something other than a table. The message is
-// the platform's own, such as "Device control action not supported".
+// the platform's own, such as "Device control action not supported"; behind
+// a generic one ("Business error occurred.") the platform often puts a code
+// and an explanation, which Code and Detail carry.
 type ToolError struct {
 	Tool    string
 	Message string
+	Code    string // the platform's error code, e.g. ERROR.NoHomesUnderAccount; empty when it gave none
+	Detail  string // the explanation behind the message, e.g. "No homes under account"
 	TraceID string // the platform's own identifier for the call, for support
 }
 
@@ -49,9 +54,17 @@ func (e *RPCError) Error() string {
 	return fmt.Sprintf("mcp %s: rpc error %d: %s", e.Method, e.Code, e.Message)
 }
 
-// Error implements the error interface.
+// Error implements the error interface: the message, then the detail and
+// the code when the platform gave them.
 func (e *ToolError) Error() string {
-	return fmt.Sprintf("aqara tool %s: %s", e.Tool, e.Message)
+	msg := e.Message
+	if e.Detail != "" {
+		msg = strings.TrimSuffix(msg, ".") + ": " + e.Detail
+	}
+	if e.Code != "" {
+		msg += " (" + e.Code + ")"
+	}
+	return fmt.Sprintf("aqara tool %s: %s", e.Tool, msg)
 }
 
 // Error implements the error interface.

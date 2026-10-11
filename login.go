@@ -60,13 +60,18 @@ type loginRequest struct {
 
 // loginResponse is the service's answer, in either of its shapes: the
 // envelope with a code, or a bare detail for a request it could not read.
+// The result is kept raw because a refusal carries an empty string where a
+// success carries the key.
 type loginResponse struct {
-	Code    *int   `json:"code"`
-	Message string `json:"message"`
-	Result  struct {
-		APIKey string `json:"api_key"`
-		Region string `json:"region"`
-	} `json:"result"`
+	Code    *int            `json:"code"`
+	Message string          `json:"message"`
+	Result  json.RawMessage `json:"result"`
+}
+
+// loginResult is the result of a successful sign-in.
+type loginResult struct {
+	APIKey string `json:"api_key"`
+	Region string `json:"region"`
 }
 
 // Login signs in and returns a fresh key, which is what the login page does
@@ -150,10 +155,11 @@ func (c *Client) login(ctx context.Context, creds Credentials) (Key, error) {
 	if *reply.Code != 0 {
 		return Key{}, &LoginError{Code: *reply.Code, Message: reply.Message}
 	}
-	if reply.Result.APIKey == "" {
+	var res loginResult
+	if err := json.Unmarshal(reply.Result, &res); err != nil || res.APIKey == "" {
 		return Key{}, errors.New("login: the service answered without a key")
 	}
-	return Key{APIKey: reply.Result.APIKey, Region: reply.Result.Region}, nil
+	return Key(res), nil
 }
 
 // loginURL is the sign-in endpoint on the MCP server's origin.

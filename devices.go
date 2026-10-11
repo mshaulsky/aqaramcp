@@ -81,12 +81,19 @@ type deviceArgs struct {
 }
 
 // envelope is what every Aqara tool answers with, as JSON in the text
-// content. On success outputs is a table; on refusal it is an empty object
-// and message says why.
+// content. On success outputs is a table; on refusal it is an object, empty
+// or holding the platform's error code and explanation, and message says
+// why.
 type envelope struct {
 	Message string          `json:"message"`
 	TraceID string          `json:"trace_id"`
 	Outputs json.RawMessage `json:"outputs"`
+}
+
+// refusal is what outputs holds when the platform explains a refusal.
+type refusal struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
 }
 
 // table is a tool's answer with its header row turned into a column index,
@@ -147,9 +154,15 @@ func (c *Client) table(ctx context.Context, tool string, args any, want ...strin
 	}
 	var rows [][]string
 	if result.IsError || json.Unmarshal(env.Outputs, &rows) != nil {
-		// The platform reports a refusal as a message with an empty object
-		// where the table would be, not as an MCP-level error.
-		return table{}, &ToolError{Tool: tool, Message: env.Message, TraceID: env.TraceID}
+		// The platform reports a refusal as a message with an object where
+		// the table would be, not as an MCP-level error; the object may
+		// name the reason behind a generic message.
+		toolErr := &ToolError{Tool: tool, Message: env.Message, TraceID: env.TraceID}
+		var why refusal
+		if json.Unmarshal(env.Outputs, &why) == nil {
+			toolErr.Code, toolErr.Detail = why.Code, why.Message
+		}
+		return table{}, toolErr
 	}
 	if len(rows) == 0 {
 		return table{}, nil
