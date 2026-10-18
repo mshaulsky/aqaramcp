@@ -139,6 +139,18 @@ September 2026: power and energy readings for outlets (the status carries only
 tool covers commands sent to devices, not what sensors report). Both are gaps
 of the service, not of the client.
 
+### Identity
+
+The endpoint, position and home IDs (`Aqr~…`) are minted per sign-in, as of
+October 2026: they are stable for as long as one key lives, and a new key
+gives the same devices a fresh set. Nothing the service hands out identifies a
+device across keys — the firmware tool repeats the endpoint ID, and devices of
+the same model share an ID prefix under one key, which does not help. Query
+by endpoint ID, but to persist a device or to reference it from elsewhere use
+`Device.Fingerprint()`: a hash of the type, the name given in the app and the
+room, the attributes that survive a new key. Renaming or moving the device
+changes it.
+
 ## Any other tool
 
 The typed methods cover what a dashboard polls. Everything else the server

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"regexp"
 	"testing"
 )
 
@@ -174,6 +175,70 @@ func TestClientStatuses(t *testing.T) {
 			}
 			if last := s.lastCall(); last.tool != toolDeviceStatus || last.args != tt.wantArgs {
 				t.Errorf("call = %+v, want tool %q args %q", last, toolDeviceStatus, tt.wantArgs)
+			}
+		})
+	}
+}
+
+func TestDeviceFingerprint(t *testing.T) {
+	shape := regexp.MustCompile(`^[a-z]+-[0-9a-f]{8}$`)
+	// lockAgain is the lock as a later sign-in lists it: new IDs, the endpoint label in another language.
+	lockAgain := lock
+	lockAgain.EndpointID, lockAgain.EndpointName, lockAgain.PositionID = "Aqr~lock2", "Door Lock", "Aqr~hall2"
+	renamed, moved, retyped := lock, lock, lock
+	renamed.DeviceName = "Замок"
+	moved.PositionName = "Кухня"
+	retyped.Type = "Outlet"
+
+	tests := []struct {
+		name     string
+		device   Device
+		other    Device
+		want     string // the device's fingerprint; empty to check only the comparison
+		wantSame bool
+	}{
+		{
+			name:     "only type, name and room count",
+			device:   lock,
+			other:    lockAgain,
+			wantSame: true,
+		},
+		{
+			name:   "a different name changes it",
+			device: lock,
+			other:  renamed,
+		},
+		{
+			name:   "a different room changes it",
+			device: lock,
+			other:  moved,
+		},
+		{
+			name:   "a different type changes it",
+			device: lock,
+			other:  retyped,
+		},
+		{
+			name:   "the scheme is pinned",
+			device: Device{Type: "DoorLock", DeviceName: "Дверной замок", PositionName: "Прихожая"},
+			other:  leak,
+			want:   "doorlock-3b7f29e4",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, other := tt.device.Fingerprint(), tt.other.Fingerprint()
+			for _, fp := range []string{got, other} {
+				if !shape.MatchString(fp) {
+					t.Errorf("fingerprint %q does not match %s", fp, shape)
+				}
+			}
+			if tt.want != "" && got != tt.want {
+				t.Errorf("fingerprint = %q, want %q", got, tt.want)
+			}
+			if same := got == other; same != tt.wantSame {
+				t.Errorf("%q vs %q: same = %t, want %t", got, other, same, tt.wantSame)
 			}
 		})
 	}

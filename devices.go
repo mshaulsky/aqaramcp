@@ -2,6 +2,8 @@ package aqaramcp
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -11,12 +13,12 @@ import (
 // are the platform's unit — a multi-gang switch is several — and the
 // endpoint ID is the key every other call takes.
 type Device struct {
-	EndpointID   string // the ID to query by
+	EndpointID   string // the ID to query by; valid while the key is, see Fingerprint
 	EndpointName string // the platform's label for the endpoint, localised
 	DeviceName   string // the name given in the app
 	Type         string // e.g. DoorLock; see the Type constants
 	PositionName string // the room, as named in the app
-	PositionID   string
+	PositionID   string // valid while the key is: a new sign-in mints new ones
 }
 
 // DeviceStatus is a device together with its current state.
@@ -101,6 +103,17 @@ type refusal struct {
 type table struct {
 	columns map[string]int
 	rows    [][]string
+}
+
+// Fingerprint identifies the device across keys. Endpoint and position
+// IDs are minted per sign-in: a new key gives the same devices new IDs,
+// so anything that must survive a restart — a database row, an alert
+// rule — keys on this instead. It is derived from the attributes that do
+// not change between keys: the type, the name given in the app and the
+// room. Renaming or moving the device changes it.
+func (d Device) Fingerprint() string {
+	sum := sha256.Sum256([]byte(d.Type + "\n" + d.DeviceName + "\n" + d.PositionName))
+	return strings.ToLower(d.Type) + "-" + hex.EncodeToString(sum[:4])
 }
 
 // Devices lists the devices of the account. It is the discovery call: run

@@ -36,6 +36,10 @@
 // dashboard needs into [Device] and [DeviceStatus] values; [Client.Call] runs
 // any other tool and hands back the raw answer.
 //
+// Endpoint and position IDs are minted per sign-in: valid for the life of a
+// key, new with the next one. [Device.Fingerprint] identifies a device across
+// keys, from its type, name and room.
+//
 // # Example
 //
 //	client, err := aqaramcp.New(apiKey)
