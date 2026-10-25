@@ -156,26 +156,13 @@ func (c *Client) Statuses(ctx context.Context, filter StatusFilter) ([]DeviceSta
 // table runs a tool and reads its answer as a table with at least the given
 // columns.
 func (c *Client) table(ctx context.Context, tool string, args any, want ...string) (table, error) {
-	result, err := c.call(ctx, tool, args)
+	env, err := c.answer(ctx, tool, args)
 	if err != nil {
 		return table{}, err
 	}
-	text := result.Text()
-	var env envelope
-	if err := json.Unmarshal([]byte(text), &env); err != nil {
-		return table{}, fmt.Errorf("%s: answer is not the JSON envelope: %w: %s", tool, err, truncate([]byte(text)))
-	}
 	var rows [][]string
-	if result.IsError || json.Unmarshal(env.Outputs, &rows) != nil {
-		// The platform reports a refusal as a message with an object where
-		// the table would be, not as an MCP-level error; the object may
-		// name the reason behind a generic message.
-		toolErr := &ToolError{Tool: tool, Message: env.Message, TraceID: env.TraceID}
-		var why refusal
-		if json.Unmarshal(env.Outputs, &why) == nil {
-			toolErr.Code, toolErr.Detail = why.Code, why.Message
-		}
-		return table{}, toolErr
+	if json.Unmarshal(env.Outputs, &rows) != nil {
+		return table{}, env.refusal(tool)
 	}
 	if len(rows) == 0 {
 		return table{}, nil
@@ -191,6 +178,24 @@ func (c *Client) table(ctx context.Context, tool string, args any, want ...strin
 		}
 	}
 	return t, nil
+}
+
+// answer runs a tool and reads the JSON envelope of its answer; an MCP-level
+// failure is a refusal.
+func (c *Client) answer(ctx context.Context, tool string, args any) (envelope, error) {
+	result, err := c.call(ctx, tool, args)
+	if err != nil {
+		return envelope{}, err
+	}
+	text := result.Text()
+	var env envelope
+	if err := json.Unmarshal([]byte(text), &env); err != nil {
+		return envelope{}, fmt.Errorf("%s: answer is not the JSON envelope: %w: %s", tool, err, truncate([]byte(text)))
+	}
+	if result.IsError {
+		return envelope{}, env.refusal(tool)
+	}
+	return env, nil
 }
 
 // call runs one tool without the package prefix on its errors; the exported
@@ -222,4 +227,15 @@ func (t table) get(row []string, column string) string {
 		return ""
 	}
 	return row[i]
+}
+
+// refusal reads the envelope as the platform refusing the query: a message,
+// and an object that may name the reason behind a generic one.
+func (e envelope) refusal(tool string) *ToolError {
+	toolErr := &ToolError{Tool: tool, Message: e.Message, TraceID: e.TraceID}
+	var why refusal
+	if json.Unmarshal(e.Outputs, &why) == nil {
+		toolErr.Code, toolErr.Detail = why.Code, why.Message
+	}
+	return toolErr
 }

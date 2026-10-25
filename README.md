@@ -139,6 +139,20 @@ September 2026: power and energy readings for outlets (the status carries only
 tool covers commands sent to devices, not what sensors report). Both are gaps
 of the service, not of the client.
 
+### Homes and automations
+
+`Homes` lists the homes of the account, `Automations` the automations of a
+home, a room or a device, and `AutomationRuns` which automations ran within a
+time range, one `AutomationRun` per execution. The platform refuses an
+`AutomationFilter` that names nothing, so pass at least the home ID.
+
+The execution history is the only event log the server offers, with minute
+resolution: an automation set up in the app to fire on a device event (a lock
+opening, a button press) turns that event into a run. The times carry no zone;
+pass `from` and `to` in the home's zone and the runs come back in it. The
+history names automations, not their IDs, which is just as well: like every
+other ID, an automation's rotates with the key.
+
 ### Identity
 
 The endpoint, position and home IDs (`Aqr~…`) are minted per sign-in, as of
@@ -154,7 +168,7 @@ changes it.
 ## Any other tool
 
 The typed methods cover what a dashboard polls. Everything else the server
-offers — scenes, automations, control — is one `Call` away:
+offers — scenes, control — is one `Call` away:
 
 ```go
 tools, _ := client.Tools(ctx)                    // names, descriptions, input schemas

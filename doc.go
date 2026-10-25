@@ -31,10 +31,11 @@
 //
 // # What comes back
 //
-// Every tool answers with a table: the first row names the columns, the rest
-// are devices. [Client.Devices] and [Client.Statuses] turn the two tables a
+// The device tools answer with a table: the first row names the columns,
+// the rest are devices. [Client.Devices] and [Client.Statuses] turn the two tables a
 // dashboard needs into [Device] and [DeviceStatus] values; [Client.Call] runs
-// any other tool and hands back the raw answer.
+// any other tool and hands back the raw answer. [Client.AutomationRuns] reads
+// the execution history of automations, the only event log the server offers.
 //
 // Endpoint and position IDs are minted per sign-in: valid for the life of a
 // key, new with the next one. [Device.Fingerprint] identifies a device across

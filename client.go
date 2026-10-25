@@ -43,7 +43,7 @@ const (
 	protocolVersion = "2025-06-18"
 
 	// clientVersion is what this client calls itself when opening a session.
-	clientVersion = "0.2.2"
+	clientVersion = "0.2.3"
 
 	// loginCooldown is how long a refused sign-in is left alone: the
 	// credentials will not have changed within the hour, and retrying at a
