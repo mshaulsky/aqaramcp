@@ -33,7 +33,7 @@ type Automation struct {
 type AutomationRun struct {
 	Automation   string    // the automation's name; the history carries no ID
 	PositionName string    // the home or room it belongs to
-	At           time.Time // to the minute, in the zone of the queried range
+	At           time.Time // to the minute, in the zone of the queried range's start
 	Failed       bool      // the automation ran but its action failed
 }
 
@@ -54,6 +54,10 @@ const (
 	// noHistory is the message of an empty history, which the platform words as a failure.
 	noHistory = "No automation execution history log found"
 )
+
+// defaultHistoryZone is the clock the history tool keeps, whatever the home's
+// region: UTC+8 as observed on the RU server; WithHistoryZone overrides it.
+var defaultHistoryZone = time.FixedZone("UTC+8", 8*60*60)
 
 // automationArgs are the arguments the automation tools take.
 type automationArgs struct {
@@ -113,16 +117,16 @@ func (c *Client) Automations(ctx context.Context, filter AutomationFilter) ([]Au
 
 // AutomationRuns reads which automations ran between from and to, one run
 // per execution. It is the only event log the server offers, at minute
-// resolution: from and to are read as wall-clock time in the home's zone, so
-// pass them in that zone, and the runs come back in from's. An empty history
-// is nil without error; the platform refuses an empty filter.
+// resolution. The platform keeps it on its own clock (see WithHistoryZone),
+// so from and to may be in any zone and the runs come back in from's. An
+// empty history is nil without error; the platform refuses an empty filter.
 func (c *Client) AutomationRuns(
 	ctx context.Context,
 	from, to time.Time,
 	filter AutomationFilter,
 ) ([]AutomationRun, error) {
 	args := filter.args()
-	args.TimeRange = []string{from.Format(rangeLayout), to.Format(rangeLayout)}
+	args.TimeRange = []string{from.In(c.zone).Format(rangeLayout), to.In(c.zone).Format(rangeLayout)}
 	env, err := c.answer(ctx, toolAutomationHistory, args)
 	if err != nil {
 		return nil, fmt.Errorf("aqaramcp: read automation history: %w", err)
@@ -145,14 +149,14 @@ func (c *Client) AutomationRuns(
 			{times: entry.Logs.Failed.Times, failed: true},
 		} {
 			for _, s := range outcome.times {
-				at, err := time.ParseInLocation(runLayout, s, from.Location())
+				at, err := time.ParseInLocation(runLayout, s, c.zone)
 				if err != nil {
 					return nil, fmt.Errorf("aqaramcp: read automation history: %s: %w", entry.AutomationName, err)
 				}
 				runs = append(runs, AutomationRun{
 					Automation:   entry.AutomationName,
 					PositionName: entry.PositionName,
-					At:           at,
+					At:           at.In(from.Location()),
 					Failed:       outcome.failed,
 				})
 			}

@@ -23,6 +23,7 @@ type Client struct {
 	creds    *Credentials // sign in for the key when there is none or it is rejected; nil means the key is static
 	onLogin  func(Key)    // told about every successful sign-in
 	http     Doer
+	zone     *time.Location // the clock the automation history is kept in
 
 	mu        sync.Mutex // serialises use of the single session and guards its state
 	sessionID string
@@ -43,7 +44,7 @@ const (
 	protocolVersion = "2025-06-18"
 
 	// clientVersion is what this client calls itself when opening a session.
-	clientVersion = "0.2.3"
+	clientVersion = "0.2.4"
 
 	// loginCooldown is how long a refused sign-in is left alone: the
 	// credentials will not have changed within the hour, and retrying at a
@@ -143,6 +144,17 @@ func WithEndpoint(endpoint string) Option {
 	}
 }
 
+// WithHistoryZone sets the clock the automation history is kept in. The
+// platform keeps it on its own clock, not the home's: UTC+8 as observed on
+// the RU server, the default. Set it if yours reads differently.
+func WithHistoryZone(zone *time.Location) Option {
+	return func(c *Client) {
+		if zone != nil {
+			c.zone = zone
+		}
+	}
+}
+
 // WithHTTPClient supplies the HTTP client used for every call, which is the
 // hook for custom timeouts, proxies, retries or instrumentation.
 func WithHTTPClient(d Doer) Option {
@@ -186,6 +198,7 @@ func New(apiKey string, opts ...Option) (*Client, error) {
 		apiKey:   apiKey,
 		http:     &http.Client{Timeout: defaultTimeout},
 		protocol: protocolVersion,
+		zone:     defaultHistoryZone,
 	}
 	for _, o := range opts {
 		o(c)

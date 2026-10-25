@@ -148,8 +148,10 @@ time range, one `AutomationRun` per execution. The platform refuses an
 
 The execution history is the only event log the server offers, with minute
 resolution: an automation set up in the app to fire on a device event (a lock
-opening, a button press) turns that event into a run. The times carry no zone;
-pass `from` and `to` in the home's zone and the runs come back in it. The
+opening, a button press) turns that event into a run. The platform keeps this
+history on its own clock, UTC+8 as observed on the RU server; the client
+converts, so pass `from` and `to` in any zone and the runs come back in
+`from`'s, and `WithHistoryZone` moves the clock if yours reads differently. The
 history names automations, not their IDs, which is just as well: like every
 other ID, an automation's rotates with the key.
 
